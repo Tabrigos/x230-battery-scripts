@@ -1,15 +1,30 @@
 #!/usr/bin/env bash
 # Usage:
-#   batt 80      -> profilo longevità (start 40, stop 80)
-#   batt 100     -> sblocca (start 0, stop 100)
-#   batt status  -> mostra le soglie correnti
-#   batt help    -> aiuto
+#   batt 80         -> Imposta profilo longevità (start 40, stop 80)
+#   batt 100        -> Sblocca (start 0, stop 100)
+#   batt status     -> Mostra le soglie correnti
+#   batt enable     -> Abilita il profilo longevità all'avvio
+#   batt disable    -> Disabilita il profilo longevità all'avvio
+#   batt help       -> Mostra questo aiuto
 
 set -euo pipefail
 
-BAT_PATH="/sys/class/power_supply/BAT0"
+find_battery_path() {
+  for bat_path in /sys/class/power_supply/BAT*;
+  do
+    if [ -e "$bat_path/charge_control_end_threshold" ]; then
+      echo "$bat_path"
+      return 0
+    fi
+  done
+  echo "Errore: Nessuna batteria con file 'charge_control_end_threshold' trovata." >&2
+  return 1
+}
+
+BAT_PATH=$(find_battery_path)
 START_FILE="$BAT_PATH/charge_control_start_threshold"
 END_FILE="$BAT_PATH/charge_control_end_threshold"
+SERVICE_NAME="set-battery-threshold.service"
 
 need_root() {
   if [[ $EUID -ne 0 ]]; then
@@ -18,45 +33,60 @@ need_root() {
   fi
 }
 
-ensure_files() {
-  if [[ ! -e "$START_FILE" || ! -e "$END_FILE" ]]; then
-    echo "File soglie non trovati in $BAT_PATH." >&2
-    echo "Controlla che il device sia BAT0 e che il kernel esponga i file charge_control_*." >&2
-    exit 1
-  fi
+check_for_tlp() {
+    if systemctl is-active --quiet tlp.service; then
+        echo "ATTENZIONE: Il servizio TLP è attivo. Potrebbe sovrascrivere le impostazioni di questo script." >&2
+        echo "Si consiglia di disabilitare la gestione delle soglie di carica in /etc/tlp.conf." >&2
+        echo "" >&2
+    fi
 }
 
 case "${1-}" in
   80)
-    need_root; ensure_files
+    need_root
+    check_for_tlp
     echo 40 > "$START_FILE"
     echo 80  > "$END_FILE"
     echo "Impostato: start=40%, stop=80% (profilo longevità)."
     ;;
   100)
-    need_root; ensure_files
+    need_root
+    check_for_tlp
     echo 0   > "$START_FILE"
     echo 100 > "$END_FILE"
     echo "Impostato: start=0%, stop=100% (sblocco totale)."
     ;;
   status)
-    ensure_files
     s=$(cat "$START_FILE" 2>/dev/null || echo "?")
     e=$(cat "$END_FILE"   2>/dev/null || echo "?")
     echo "Soglie correnti: start=${s}%, stop=${e}%"
     ;;
+  enable)
+    need_root
+    check_for_tlp
+    systemctl enable "$SERVICE_NAME"
+    echo "Profilo longevità abilitato all'avvio."
+    ;;
+  disable)
+    need_root
+    check_for_tlp
+    systemctl disable "$SERVICE_NAME"
+    echo "Profilo longevità disabilitato all'avvio."
+    ;;
   help|-h|--help|"")
     cat <<'MSG'
 Uso:
-  batt 80       → profilo longevità (start 40%, stop 80%)
-  batt 100      → sblocco totale (start 0%, stop 100%)
-  batt status   → mostra le soglie correnti
-  batt help     → mostra questo messaggio
+  batt 80         → Imposta profilo longevità (start 40%, stop 80%)
+  batt 100        → Sblocca totale (start 0%, stop 100%)
+  batt status     → Mostra le soglie correnti
+  batt enable     → Abilita il profilo longevità all'avvio
+  batt disable    → Disabilita il profilo longevità all'avvio
+  batt help       → Mostra questo messaggio
 MSG
     ;;
   *)
     echo "Argomento non valido: $1" >&2
-    echo "Usa: batt 80 | batt 100 | batt status" >&2
+    echo "Usa: batt [80|100|status|enable|disable|help]" >&2
     exit 2
     ;;
 esac
