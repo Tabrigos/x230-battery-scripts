@@ -4,6 +4,11 @@ Questo repository contiene uno script per gestire le soglie di carica della batt
 
 L'obiettivo è quello di estendere la vita utile della batteria limitando la carica massima quando il portatile è usato prevalentemente con l'alimentatore collegato.
 
+## Novità
+
+- **Installazione e Disinstallazione Semplificate**: Introdotti gli script `install.sh` e `uninstall.sh` per una gestione più agevole del tool.
+- **Miglioramenti alla Sicurezza**: Lo script `batt` ora implementa il Principio del Minimo Privilegio. Non è più necessario eseguirlo interamente con `sudo`; la richiesta di password avverrà solo per le operazioni che modificano lo stato del sistema.
+
 ## Architettura
 
 La logica è centralizzata nello script `scripts/batt`. Questo strumento si occupa di:
@@ -20,47 +25,46 @@ Lo script rileva automaticamente la batteria, ma richiede che il sistema esponga
 
 ## Installazione
 
-1.  **Copia lo script `batt`** in un percorso di sistema e rendilo eseguibile:
+Per installare il tool, clona il repository ed esegui lo script `install.sh` con privilegi di root:
 
-    ```bash
-    sudo cp scripts/batt /usr/local/bin/batt
-    sudo chmod +x /usr/local/bin/batt
-    ```
+```bash
+# Esegui lo script di installazione
+sudo ./install.sh
+```
 
-2.  **Copia il file di servizio `systemd`**:
+Lo script si occuperà di copiare i file nelle posizioni corrette e di ricaricare i servizi di sistema.
 
-    ```bash
-    sudo cp systemd/set-battery-threshold.service /etc/systemd/system/
-    ```
+## Disinstallazione
 
-3.  **Ricarica il demone di `systemd`** per fargli riconoscere il nuovo servizio:
+Per rimuovere completamente il tool dal sistema, esegui lo script `uninstall.sh` con privilegi di root dalla directory del progetto:
 
-    ```bash
-    sudo systemctl daemon-reload
-    ```
+```bash
+# Esegui lo script di disinstallazione
+sudo ./uninstall.sh
+```
 
 ## Utilizzo
 
-Lo script `batt` è l'unico comando di cui hai bisogno.
+Lo script `batt` è l'unico comando di cui hai bisogno. **Non è più necessario eseguirlo interamente con `sudo`**. La richiesta di password avverrà automaticamente solo per le operazioni che richiedono privilegi elevati (es. impostare le soglie o abilitare/disabilitare il servizio systemd).
 
 - **Imposta profilo longevità (carica 40%-80%) al volo:**
   ```bash
-  sudo batt 80
+  batt 80
   ```
 
 - **Sblocca la carica al 100% al volo:**
   ```bash
-  sudo batt 100
+  batt 100
   ```
 
 - **Abilita il profilo longevità all'avvio del sistema:**
   ```bash
-  sudo batt enable
+  batt enable
   ```
 
 - **Disabilita il profilo longevità all'avvio:**
   ```bash
-  sudo batt disable
+  batt disable
   ```
 
 - **Controlla le soglie correnti:**
