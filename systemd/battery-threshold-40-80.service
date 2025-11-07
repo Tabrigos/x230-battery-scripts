@@ -1,0 +1,16 @@
+[Unit]
+Description=Imposta soglie batteria: start 40%% / stop 80%%
+ConditionPathExists=/sys/class/power_supply/BAT0/charge_control_start_threshold
+ConditionPathExists=/sys/class/power_supply/BAT0/charge_control_end_threshold
+After=tlp.service
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/bash -c 'echo 40 > /sys/class/power_supply/BAT0/charge_control_start_threshold; echo 80 > /sys/class/power_supply/BAT0/charge_control_end_threshold'
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

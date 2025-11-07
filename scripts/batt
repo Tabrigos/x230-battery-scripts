@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Usage:
+#   batt 80      -> profilo longevità (start 40, stop 80)
+#   batt 100     -> sblocca (start 0, stop 100)
+#   batt status  -> mostra le soglie correnti
+#   batt help    -> aiuto
+
+set -euo pipefail
+
+BAT_PATH="/sys/class/power_supply/BAT0"
+START_FILE="$BAT_PATH/charge_control_start_threshold"
+END_FILE="$BAT_PATH/charge_control_end_threshold"
+
+need_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "Richiesti privilegi di root. Riprova con: sudo $0 $*" >&2
+    exit 1
+  fi
+}
+
+ensure_files() {
+  if [[ ! -e "$START_FILE" || ! -e "$END_FILE" ]]; then
+    echo "File soglie non trovati in $BAT_PATH." >&2
+    echo "Controlla che il device sia BAT0 e che il kernel esponga i file charge_control_*." >&2
+    exit 1
+  fi
+}
+
+case "${1-}" in
+  80)
+    need_root; ensure_files
+    echo 40 > "$START_FILE"
+    echo 80  > "$END_FILE"
+    echo "Impostato: start=40%, stop=80% (profilo longevità)."
+    ;;
+  100)
+    need_root; ensure_files
+    echo 0   > "$START_FILE"
+    echo 100 > "$END_FILE"
+    echo "Impostato: start=0%, stop=100% (sblocco totale)."
+    ;;
+  status)
+    ensure_files
+    s=$(cat "$START_FILE" 2>/dev/null || echo "?")
+    e=$(cat "$END_FILE"   2>/dev/null || echo "?")
+    echo "Soglie correnti: start=${s}%, stop=${e}%"
+    ;;
+  help|-h|--help|"")
+    cat <<'MSG'
+Uso:
+  batt 80       → profilo longevità (start 40%, stop 80%)
+  batt 100      → sblocco totale (start 0%, stop 100%)
+  batt status   → mostra le soglie correnti
+  batt help     → mostra questo messaggio
+MSG
+    ;;
+  *)
+    echo "Argomento non valido: $1" >&2
+    echo "Usa: batt 80 | batt 100 | batt status" >&2
+    exit 2
+    ;;
+esac
