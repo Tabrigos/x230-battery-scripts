@@ -1,0 +1,11 @@
+[Unit]
+Description=Set Battery Charge Threshold for Longevity
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/batt 80
+
+[Install]
+WantedBy=multi-user.target
