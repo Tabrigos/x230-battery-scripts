@@ -9,29 +9,42 @@
 
 set -euo pipefail
 
-find_battery_path() {
-  for bat_path in /sys/class/power_supply/BAT*;
-  do
-    if [ -e "$bat_path/charge_control_end_threshold" ]; then
-      echo "$bat_path"
-      return 0
+# Trova tutti i percorsi delle batterie che supportano il controllo della soglia di carica.
+find_battery_paths() {
+  local found_paths=""
+  for bat_path in /sys/class/power_supply/BAT*; do
+    # Il nome del file può variare, verifichiamo i più comuni
+    if [ -e "$bat_path/charge_control_end_threshold" ] || [ -e "$bat_path/charge_stop_threshold" ]; then
+      found_paths="$found_paths $bat_path"
     fi
   done
-  echo "Errore: Nessuna batteria con file 'charge_control_end_threshold' trovata." >&2
-  return 1
-}
 
-BAT_PATH=$(find_battery_path)
-START_FILE="$BAT_PATH/charge_control_start_threshold"
-END_FILE="$BAT_PATH/charge_control_end_threshold"
-SERVICE_NAME="set-battery-threshold.service"
+  if [ -z "$found_paths" ]; then
+    echo "Errore: Nessuna batteria compatibile trovata in /sys/class/power_supply/BAT*." >&2
+    return 1
+  fi
+  
+  echo "$found_paths" | sed 's/^ *//' # Rimuove lo spazio iniziale
+}
 
 # Funzione per scrivere nei file di /sys con sudo
 write_sys_file() {
     local value=$1
     local file=$2
-    echo "Per modificare i file di sistema, potrebbe essere richiesta la password di sudo."
+    # La richiesta di password avverrà solo la prima volta
     echo "$value" | sudo tee "$file" > /dev/null
+}
+
+# Determina il nome corretto per i file di controllo della carica
+get_threshold_files() {
+    local bat_path=$1
+    if [ -e "$bat_path/charge_control_end_threshold" ]; then
+        echo "$bat_path/charge_control_start_threshold $bat_path/charge_control_end_threshold"
+    elif [ -e "$bat_path/charge_stop_threshold" ]; then
+        echo "$bat_path/charge_start_threshold $bat_path/charge_stop_threshold"
+    else
+        return 1
+    fi
 }
 
 check_for_tlp() {
@@ -42,23 +55,93 @@ check_for_tlp() {
     fi
 }
 
+# --- Comandi Principali ---
+
+set_thresholds() {
+    local start_value=$1
+    local stop_value=$2
+    local profile_name=$3
+    
+    local BAT_PATHS
+    BAT_PATHS=$(find_battery_paths)
+    
+    check_for_tlp
+    echo "Impostazione profilo '$profile_name': start=${start_value}%, stop=${stop_value}%"
+    echo "Per modificare i file di sistema, potrebbe essere richiesta la password di sudo."
+
+    for bat_path in $BAT_PATHS; do
+        local bat_name
+        bat_name=$(basename "$bat_path")
+        
+        local files
+        files=$(get_threshold_files "$bat_path") || {
+            echo "Impossibile determinare i file di soglia per $bat_name. Salto." >&2
+            continue
+        }
+        
+        local start_file end_file
+        start_file=$(echo "$files" | cut -d' ' -f1)
+        end_file=$(echo "$files" | cut -d' ' -f2)
+
+        echo "  -> Applico a $bat_name..."
+        write_sys_file "$start_value" "$start_file"
+        write_sys_file "$stop_value" "$end_file"
+    done
+    echo "Profilo '$profile_name' applicato con successo."
+}
+
+show_status() {
+    local BAT_PATHS
+    BAT_PATHS=$(find_battery_paths)
+
+    echo "Stato attuale delle batterie:"
+    for bat_path in $BAT_PATHS; do
+        local bat_name
+        bat_name=$(basename "$bat_path")
+        
+        local files
+        files=$(get_threshold_files "$bat_path") || {
+            echo "--- $bat_name (file di soglia non trovati) ---" >&2
+            continue
+        }
+
+        local start_file end_file
+        start_file=$(echo "$files" | cut -d' ' -f1)
+        end_file=$(echo "$files" | cut -d' ' -f2)
+
+        local s e status
+        s=$(cat "$start_file" 2>/dev/null || echo "?")
+        e=$(cat "$end_file" 2>/dev/null || echo "?")
+        status=$(cat "$bat_path/status" 2>/dev/null || echo "Sconosciuto")
+
+        echo "--- $bat_name ---"
+        echo "  Soglie:  start=${s}%, stop=${e}%"
+        echo "  Stato:   $status"
+    done
+    
+    local service_status="disabilitato"
+    if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+        service_status="abilitato"
+    fi
+    echo ""
+    echo "Servizio all'avvio ($SERVICE_NAME): $service_status"
+    check_for_tlp
+}
+
+# --- Gestione Argomenti ---
+
+SERVICE_NAME="set-battery-threshold.service"
+
 case "${1-}" in
   80)
-    check_for_tlp
-    write_sys_file 40 "$START_FILE"
-    write_sys_file 80 "$END_FILE"
-    echo "Impostato: start=40%, stop=80% (profilo longevità)."
+    set_thresholds 40 80 "Longevità"
     ;;
   100)
-    check_for_tlp
-    write_sys_file 0 "$START_FILE"
-    write_sys_file 100 "$END_FILE"
-    echo "Impostato: start=0%, stop=100% (sblocco totale)."
+    # Per sbloccare la carica, alcune batterie usano 96, altre 0. Usiamo 96 per compatibilità.
+    set_thresholds 96 100 "Sblocco Totale"
     ;;
   status)
-    s=$(cat "$START_FILE" 2>/dev/null || echo "?")
-    e=$(cat "$END_FILE"   2>/dev/null || echo "?")
-    echo "Soglie correnti: start=${s}%, stop=${e}%"
+    show_status
     ;;
   enable)
     check_for_tlp
@@ -76,8 +159,8 @@ case "${1-}" in
     cat <<'MSG'
 Uso:
   batt 80         → Imposta profilo longevità (start 40%, stop 80%)
-  batt 100        → Sblocca totale (start 0%, stop 100%)
-  batt status     → Mostra le soglie correnti
+  batt 100        → Sblocca totale (start 96%, stop 100%)
+  batt status     → Mostra le soglie correnti per tutte le batterie
   batt enable     → Abilita il profilo longevità all'avvio
   batt disable    → Disabilita il profilo longevità all'avvio
   batt help       → Mostra questo messaggio
